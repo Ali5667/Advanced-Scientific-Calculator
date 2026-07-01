@@ -74,7 +74,7 @@ Since the program uses a colorful Command Line interface, it is highly recommend
 ### 2. From the Terminal (PowerShell / Command Prompt)
 If you have already compiled the program into an executable `calculator.exe`, you can run it directly by typing:
 ```powershell
-& "d:\coding\U project\lectuer\calculator.exe"
+
 ```
 
 ## 🛠️ Requirements
