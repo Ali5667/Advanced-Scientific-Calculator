@@ -61,22 +61,6 @@ The program includes a comprehensive Unit Conversion Center featuring 11 differe
 
 Plus, quick Angle Conversions: Degrees to Radians `(D->R)` and Radians to Degrees `(R->D)`.
 
----
 
-## 💻 How to Run
 
-Since the program uses a colorful Command Line interface, it is highly recommended to run it in an environment that supports ANSI Colors (like Windows Terminal or an updated Command Prompt).
 
-### 1. Using Dev-C++ (If installed)
-*   Open the `advavced calculator.cpp` file in Dev-C++.
-*   Press `F11` (Compile & Run) to compile and launch the application.
-
-### 2. From the Terminal (PowerShell / Command Prompt)
-If you have already compiled the program into an executable `calculator.exe`, you can run it directly by typing:
-```powershell
-
-```
-
-## 🛠️ Requirements
-*   A C++ Compiler supporting `C++14` standard or newer (such as `g++` provided with MinGW).
-*   Windows Operating System (ANSI colors are automatically enabled in the code using system API calls).
