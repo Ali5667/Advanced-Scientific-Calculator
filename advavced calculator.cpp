@@ -6,7 +6,11 @@
 #include <vector>
 #include <sstream>
 #include <cstdlib>
-
+#include <memory>
+#include <future>
+#include <stdexcept>
+#include <cctype>
+#include <utility>
 using namespace std;
 
 // ===================== ANSI Color Codes =====================
@@ -227,6 +231,260 @@ double permutation(int n, int r) {
 
 double degToRad(double d) { return d * PI / 180.0; }
 double radToDeg(double r) { return r * 180.0 / PI; }
+
+// ===================== AST & Expression Parser =====================
+// Tokens
+enum class TokenType {
+    NUMBER, PLUS, MINUS, MUL, DIV, MOD, POW, LPAREN, RPAREN, IDENTIFIER, END
+};
+
+struct Token {
+    TokenType type;
+    double value;
+    string id;
+};
+
+class Lexer {
+    string src;
+    size_t pos;
+public:
+    Lexer(string s) : src(s), pos(0) {}
+    
+    Token next() {
+        while (pos < src.length() && isspace(src[pos])) pos++;
+        if (pos >= src.length()) return {TokenType::END, 0, ""};
+        
+        char c = src[pos];
+        if (isdigit(c) || c == '.') {
+            size_t len;
+            double val = stod(src.substr(pos), &len);
+            pos += len;
+            return {TokenType::NUMBER, val, ""};
+        }
+        if (isalpha(c)) {
+            string id = "";
+            while (pos < src.length() && isalpha(src[pos])) {
+                id += src[pos++];
+            }
+            return {TokenType::IDENTIFIER, 0, id};
+        }
+        
+        pos++;
+        switch(c) {
+            case '+': return {TokenType::PLUS, 0, ""};
+            case '-': return {TokenType::MINUS, 0, ""};
+            case '*': return {TokenType::MUL, 0, ""};
+            case '/': return {TokenType::DIV, 0, ""};
+            case '%': return {TokenType::MOD, 0, ""};
+            case '^': return {TokenType::POW, 0, ""};
+            case '(': return {TokenType::LPAREN, 0, ""};
+            case ')': return {TokenType::RPAREN, 0, ""};
+            default: throw runtime_error(string("Unknown character: ") + c);
+        }
+    }
+};
+
+struct ASTNode {
+    virtual double eval() const = 0;
+    virtual ~ASTNode() = default;
+};
+
+struct NumberNode : ASTNode {
+    double val;
+    NumberNode(double v) : val(v) {}
+    double eval() const override { return val; }
+};
+
+struct BinaryOpNode : ASTNode {
+    char op;
+    unique_ptr<ASTNode> left, right;
+    BinaryOpNode(char o, unique_ptr<ASTNode> l, unique_ptr<ASTNode> r) 
+        : op(o), left(move(l)), right(move(r)) {}
+    
+    double eval() const override {
+        // Multi-threading: evaluate left and right concurrently
+        auto future_left = std::async(std::launch::async, &ASTNode::eval, left.get());
+        double r_val = right->eval();
+        double l_val = future_left.get();
+        
+        switch (op) {
+            case '+': return l_val + r_val;
+            case '-': return l_val - r_val;
+            case '*': return l_val * r_val;
+            case '/': 
+                if (r_val == 0) throw runtime_error("Division by zero");
+                return l_val / r_val;
+            case '%':
+                if (r_val == 0) throw runtime_error("Modulus by zero");
+                return fmod(l_val, r_val);
+            case '^': return pow(l_val, r_val);
+            default: throw runtime_error("Unknown operator");
+        }
+    }
+};
+
+struct FuncNode : ASTNode {
+    string name;
+    unique_ptr<ASTNode> arg;
+    FuncNode(string n, unique_ptr<ASTNode> a) : name(n), arg(move(a)) {}
+    
+    double eval() const override {
+        double v = arg->eval();
+        if (name == "sin") return sin(degToRad(v));
+        if (name == "cos") return cos(degToRad(v));
+        if (name == "tan") return tan(degToRad(v));
+        if (name == "asin") return radToDeg(asin(v));
+        if (name == "acos") return radToDeg(acos(v));
+        if (name == "atan") return radToDeg(atan(v));
+        if (name == "sinh") return sinh(v);
+        if (name == "cosh") return cosh(v);
+        if (name == "tanh") return tanh(v);
+        if (name == "ln") return log(v);
+        if (name == "log10" || name == "log") return log10(v);
+        if (name == "sqrt") return sqrt(v);
+        if (name == "cbrt") return cbrt(v);
+        if (name == "abs") return abs(v);
+        if (name == "exp") return exp(v);
+        if (name == "fact" || name == "factorial") return factorial((int)v);
+        throw runtime_error("Unknown function: " + name);
+    }
+};
+
+class Parser {
+    Lexer lexer;
+    Token curr;
+    
+    void advance() { curr = lexer.next(); }
+    
+    unique_ptr<ASTNode> parseFactor() {
+        if (curr.type == TokenType::NUMBER) {
+            double v = curr.value;
+            advance();
+            return unique_ptr<NumberNode>(new NumberNode(v));
+        } else if (curr.type == TokenType::LPAREN) {
+            advance();
+            auto node = parseExpr();
+            if (curr.type != TokenType::RPAREN) throw runtime_error("Missing closing parenthesis");
+            advance();
+            return node;
+        } else if (curr.type == TokenType::IDENTIFIER) {
+            string id = curr.id;
+            advance();
+            if (id == "pi") return unique_ptr<NumberNode>(new NumberNode(PI));
+            if (id == "e") return unique_ptr<NumberNode>(new NumberNode(E_CONST));
+            if (curr.type == TokenType::LPAREN) {
+                advance();
+                auto arg = parseExpr();
+                if (curr.type != TokenType::RPAREN) throw runtime_error("Missing closing parenthesis in function");
+                advance();
+                return unique_ptr<FuncNode>(new FuncNode(id, move(arg)));
+            }
+            throw runtime_error("Unknown identifier or missing function arguments: " + id);
+        } else if (curr.type == TokenType::MINUS) {
+            advance();
+            auto node = parseFactor();
+            return unique_ptr<BinaryOpNode>(new BinaryOpNode('-', unique_ptr<NumberNode>(new NumberNode(0)), move(node)));
+        }
+        throw runtime_error("Unexpected token in factor");
+    }
+    
+    unique_ptr<ASTNode> parsePower() {
+        auto node = parseFactor();
+        while (curr.type == TokenType::POW) {
+            advance();
+            auto right = parseFactor();
+            node = unique_ptr<BinaryOpNode>(new BinaryOpNode('^', move(node), move(right)));
+        }
+        return node;
+    }
+    
+    unique_ptr<ASTNode> parseTerm() {
+        auto node = parsePower();
+        while (curr.type == TokenType::MUL || curr.type == TokenType::DIV || curr.type == TokenType::MOD) {
+            char op = curr.type == TokenType::MUL ? '*' : (curr.type == TokenType::DIV ? '/' : '%');
+            advance();
+            node = unique_ptr<BinaryOpNode>(new BinaryOpNode(op, move(node), parsePower()));
+        }
+        return node;
+    }
+    
+    unique_ptr<ASTNode> parseExpr() {
+        auto node = parseTerm();
+        while (curr.type == TokenType::PLUS || curr.type == TokenType::MINUS) {
+            char op = curr.type == TokenType::PLUS ? '+' : '-';
+            advance();
+            node = unique_ptr<BinaryOpNode>(new BinaryOpNode(op, move(node), parseTerm()));
+        }
+        return node;
+    }
+    
+public:
+    Parser(string s) : lexer(s) { advance(); }
+    double evaluate() {
+        auto tree = parseExpr();
+        if (curr.type != TokenType::END) throw runtime_error("Unexpected extra tokens");
+        return tree->eval();
+    }
+};
+
+void evaluateExpressionUI() {
+    clearScreen();
+    cout << "\n";
+    drawDoubleLine();
+    cout << "  " << BOLD << CYAN << "       MULTITHREADED EXPRESSION EVALUATOR" << RESET << "\n";
+    drawDoubleLine();
+    cout << "  " << DIM << WHITE << "  Type an expression (e.g., 2+3*sin(30)) or 'exit'." << RESET << "\n";
+    cout << "  " << DIM << WHITE << "  Multiple expressions can be separated by commas." << RESET << "\n";
+    drawLine();
+    
+    cin.ignore(numeric_limits<streamsize>::max(), '\n'); // clear buffer
+    
+    while (true) {
+        cout << "\n  " << CYAN << BOLD << " Expr >> " << RESET << YELLOW;
+        string line;
+        if (!getline(cin, line)) break;
+        if (line == "exit" || line == "0" || line == "quit") break;
+        if (line.empty()) continue;
+        
+        cout << RESET;
+        
+        try {
+            // Split by comma for batch processing
+            vector<string> expressions;
+            stringstream ss(line);
+            string expr;
+            while (getline(ss, expr, ',')) {
+                if (!expr.empty()) expressions.push_back(expr);
+            }
+            
+            if (expressions.size() == 1) {
+                Parser p(expressions[0]);
+                double res = p.evaluate();
+                showResult(expressions[0], res);
+            } else {
+                // Batch processing with threads
+                cout << "\n  " << DIM << WHITE << "Evaluating " << expressions.size() << " expressions concurrently..." << RESET << "\n";
+                vector<future<double>> futures;
+                for (const auto& ex : expressions) {
+                    futures.push_back(async(launch::async, [ex]() {
+                        Parser p(ex);
+                        return p.evaluate();
+                    }));
+                }
+                for (size_t i = 0; i < expressions.size(); ++i) {
+                    try {
+                        double res = futures[i].get();
+                        cout << "  " << GREEN << BOLD << " [" << (i+1) << "] " << RESET << WHITE << expressions[i] << " = " << YELLOW << formatNumber(res) << RESET << "\n";
+                    } catch (const exception& e) {
+                        cout << "  " << RED << BOLD << " [" << (i+1) << "] " << RESET << RED << expressions[i] << " -> Error: " << e.what() << RESET << "\n";
+                    }
+                }
+            }
+        } catch (const exception& e) {
+            showError(e.what());
+        }
+    }
+}
 
 // =============================================================
 //                  UNIT CONVERSION SUB-MENUS
@@ -655,6 +913,7 @@ void displayMainMenu() {
     drawMenuOption(30, "UNITS",  "Unit Conversions >>",    RED);
     drawMenuOption(31, "HIST",   "View History",           RED);
     drawMenuOption(32, "CONST",  "Constants (pi, e...)",   RED);
+    drawMenuOption(33, "EXPR",   "Expression Evaluator",   RED);
 
     cout << "\n";
     drawLine('=');
@@ -676,7 +935,7 @@ int main() {
     while (true) {
         displayMainMenu();
         cout << "\n";
-        choice = getMenuChoice("Choose operation (0-32)", 0, 32);
+        choice = getMenuChoice("Choose operation (0-33)", 0, 33);
 
         if (choice == 0) {
             clearScreen();
@@ -695,6 +954,7 @@ int main() {
         if (choice == 30) { conversionsMenu(); continue; }
         if (choice == 31) { showHistory(); pressEnter(); continue; }
         if (choice == 32) { showConstants(); pressEnter(); continue; }
+        if (choice == 33) { evaluateExpressionUI(); continue; }
 
         // ===== All math operations wrapped in repeat loop =====
         do {
